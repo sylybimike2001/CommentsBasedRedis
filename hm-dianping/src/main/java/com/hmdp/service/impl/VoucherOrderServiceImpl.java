@@ -8,8 +8,11 @@ import com.hmdp.service.ISeckillVoucherService;
 import com.hmdp.service.IVoucherOrderService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.utils.RedisIdWorker;
+import com.hmdp.utils.SimpleLock;
 import com.hmdp.utils.UserHolder;
 import org.springframework.aop.framework.AopContext;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -33,6 +36,8 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 
     @Resource
     RedisIdWorker redisIdWorker;
+    @Autowired
+    private StringRedisTemplate stringRedisTemplate;
 
     @Override
     public Result seckillVoucher(Long voucherId) {
@@ -56,9 +61,18 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         //根据用户id上锁,悲观锁解决
         Long userID = UserHolder.getUser().getId();
         //很关键，不使用.toString().intern()那么每次及时userID值相同，对象也不同，做不到上锁
-        synchronized (userID.toString().intern()) {
+        SimpleLock lock = new SimpleLock(stringRedisTemplate,"order:"+userID);
+        boolean isLock = lock.tryLock(1200L);
+        if (!isLock){
+            return Result.fail("不允许重复下单");
+        }
+        try {
             VoucherOrderServiceImpl proxy = (VoucherOrderServiceImpl) AopContext.currentProxy();
             return proxy.createVoucherOrder(voucherId,userID);
+        } catch (IllegalStateException e) {
+            throw new RuntimeException(e);
+        }finally {
+            lock.unlock();
         }
     }
 
