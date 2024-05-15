@@ -39,8 +39,8 @@ class HmDianPingApplicationTests {
 
     @Test
     public void saveShop() throws InterruptedException {
-        Shop shop = shopService.getById(2);
-        cacheClient.setWithExpireTime(CACHE_SHOP_KEY + 2L,shop,10L, TimeUnit.SECONDS);
+        Shop shop = shopService.getById(1);
+        cacheClient.setWithExpireTime(CACHE_SHOP_KEY + 1L,shop,10L, TimeUnit.SECONDS);
     }
 
     @Test
