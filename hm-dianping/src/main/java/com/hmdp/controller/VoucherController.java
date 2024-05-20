@@ -4,6 +4,8 @@ package com.hmdp.controller;
 import com.hmdp.dto.Result;
 import com.hmdp.entity.Voucher;
 import com.hmdp.service.IVoucherService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
@@ -22,6 +24,8 @@ public class VoucherController {
 
     @Resource
     private IVoucherService voucherService;
+    @Autowired
+    private StringRedisTemplate stringRedisTemplate;
 
     /**
      * 新增普通券
@@ -31,6 +35,8 @@ public class VoucherController {
     @PostMapping
     public Result addVoucher(@RequestBody Voucher voucher) {
         voucherService.save(voucher);
+        Long id = voucher.getId();
+        stringRedisTemplate.opsForValue().set("voucher:" + id,voucher.getStock().toString());
         return Result.ok(voucher.getId());
     }
 
