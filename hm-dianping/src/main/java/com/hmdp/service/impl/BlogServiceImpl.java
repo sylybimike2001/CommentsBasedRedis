@@ -4,26 +4,32 @@ import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.hmdp.dto.Result;
+import com.hmdp.dto.ScrollResult;
 import com.hmdp.dto.UserDTO;
 import com.hmdp.entity.Blog;
+import com.hmdp.entity.Follow;
 import com.hmdp.entity.User;
 import com.hmdp.mapper.BlogMapper;
 import com.hmdp.service.IBlogService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.hmdp.service.IFollowService;
 import com.hmdp.service.IUserService;
 import com.hmdp.utils.SystemConstants;
 import com.hmdp.utils.UserHolder;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ZSetOperations;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.Resource;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import static com.hmdp.service.impl.FollowServiceImpl.getUserSetInfo;
 import static com.hmdp.utils.RedisConstants.BLOG_LIKED_KEY;
 
 /**
@@ -39,6 +45,9 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
 
     @Resource
     IUserService userService;
+
+    @Resource
+    IFollowService followService;
 
     @Autowired
     private StringRedisTemplate stringRedisTemplate;
@@ -101,14 +110,75 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
     @Override
     public Result queryBlogLikes(Long id) {
         Set<String> top5 = stringRedisTemplate.opsForZSet().range(BLOG_LIKED_KEY + id, 0, 4);
-        if (top5 == null || top5.isEmpty()) {
-            return Result.ok(Collections.emptyList());
+        return getUserSetInfo(top5, userService);
+    }
+
+    @Override
+    public Result saveBlog(Blog blog) {
+        // 获取登录用户
+        UserDTO user = UserHolder.getUser();
+        blog.setUserId(user.getId());
+        // 保存探店博文
+        boolean isSuccess = save(blog);
+        if(!isSuccess){
+            //select * from tb_follower where user_id = user.getID()
+            return Result.fail("博文发布失败！");
         }
-        List<Long> ids = top5.stream().map(Long::valueOf).collect(Collectors.toList());
+        // 查询博主的所有粉丝
+        List<Follow> follows = followService.query().eq("follow_user_id", user.getId()).list();
+        System.out.println(follows);
+        // 把博客推送到所有粉丝
+        for(Follow follow : follows){
+            Long userId = follow.getUserId();
+            // 保存博客id到redis
+            stringRedisTemplate.opsForZSet().add("feed:" + userId, blog.getId().toString(), System.currentTimeMillis());
+        }
+
+        // 返回id
+        return Result.ok(blog);
+    }
+
+    @Override
+    public Result queryBlogOfFollow(Long lastID, Integer offset) {
+        UserDTO user = UserHolder.getUser();
+        String key = "feed:" + user.getId();
+        //1.查询自己收件箱的所有博文
+        Set<ZSetOperations.TypedTuple<String>> typedTuples = stringRedisTemplate.opsForZSet()
+                .reverseRangeByScoreWithScores(key, 0, lastID, offset, 2);
+        if(typedTuples == null|| typedTuples.isEmpty()){
+            return Result.ok();
+        }
+        //.reverseRangeByScore(key, 0, lastID, offset, 2);
+        //2.数据解析和处理,确定offset lastID
+        List<Long> ids = new ArrayList<>(typedTuples.size());
+        long minTime = 0;
+        int os = 1;
+        for(ZSetOperations.TypedTuple<String> typedTuple : typedTuples){
+            ids.add(Long.valueOf(typedTuple.getValue()));
+            long time = typedTuple.getScore().longValue();
+            if(time == minTime){
+                os++;
+            }else{
+                minTime = time;
+                os = 1;
+            }
+        }
+        os = minTime == lastID? os + offset : os;
+        //3.根据blogid查询blog
         String joinIds = StrUtil.join(",",ids);
-        List<User> users = userService.query().in("id", ids).last("ORDER BY FIELD(id," + joinIds + ")").list();
-        List<UserDTO> userDTOs = users.stream().map(user -> BeanUtil.copyProperties(user,UserDTO.class)).collect(Collectors.toList());
-        return Result.ok(userDTOs);
+        List<Blog> blogs = query().in("id", ids).last("ORDER BY FIELD(id," + joinIds + ")").list();
+        //4.封装
+        for (Blog blog : blogs) {
+            //给blog添加额外的信息
+            queryBlogUser(blog);
+            //查询是否点过赞
+            isBlogLiked(blog);
+        }
+        ScrollResult scrollResult = new ScrollResult();
+        scrollResult.setList(blogs);
+        scrollResult.setOffset(os);
+        scrollResult.setMinTime(minTime);
+        return Result.ok(scrollResult);
     }
 
     private void queryBlogUser(Blog blog) {
