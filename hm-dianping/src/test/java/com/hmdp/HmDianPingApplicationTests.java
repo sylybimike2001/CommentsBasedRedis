@@ -8,10 +8,12 @@ import com.hmdp.service.IFollowService;
 import com.hmdp.service.impl.ShopServiceImpl;
 import com.hmdp.utils.*;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.autoconfigure.data.redis.RedisProperties;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.geo.Point;
 import org.springframework.data.redis.connection.RedisGeoCommands;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import redis.clients.jedis.Jedis;
 
 import javax.annotation.Resource;
 
@@ -108,6 +110,14 @@ class HmDianPingApplicationTests {
             }
             stringRedisTemplate.opsForGeo().add(key, locations);
         }
-
+    }
+    @Test
+    public void tryConnectVMRedis(){
+            //我这里用的是Jedis库
+        Jedis jedis=new Jedis("192.168.30.128",6379);
+        String auth = jedis.auth("123321");
+        System.out.println(auth);
+        System.out.println(jedis.ping());
+        jedis.close();
     }
 }
